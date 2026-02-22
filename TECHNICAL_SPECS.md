@@ -132,62 +132,65 @@ The system is organized as a polyglot monorepo with clear boundaries between ser
 
 ### 2.1 Top-Level Structure
 
+Each deployable service lives in its own top-level folder and owns its build tooling. A service folder can be a Go project (with a local `go.mod` and optional `go.work`) or a Node.js/TypeScript project (with its own `package.json`, Nx/pnpm workspace, etc.). Shared libraries remain centralized under `libs/`. Infrastructure for local development (message bus, databases, monitoring stack) is managed via a single root-level `docker-compose.yml`, with infra components grouped into their own folders.
+
 ```text
 vibe-copy-trading/
-	PRD.md
-	TECHNICAL_SPECS.md
+  PRD.md
+  TECHNICAL_SPECS.md
+  docker-compose.yml      # Local infra: message bus, DBs, monitoring stack
 
-	services/
-		ingestion/            # Signal Ingestion Service (Go)
-		config-api/           # Configuration API (Go)
-		matcher/              # Subscription Matcher (Go)
-		planner/              # Execution Planner (Go)
-		worker/               # Execution Worker (Go)
-		analytics-processor/  # Analytics stream processor (Go)
+  ingestion/              # Signal Ingestion Service (e.g., Node.js with Nx or Go)
+  config-api/             # Configuration API (Go or Node.js)
+  matcher/                # Subscription Matcher (Go or Node.js)
+  planner/                # Execution Planner (Go or Node.js)
+  worker/                 # Execution Worker (Go or Node.js)
+  analytics-processor/    # Analytics stream processor (Go or Node.js)
 
-	libs/
-		go/
-			hyperliquid/        # Hyperliquid client + models
-			configclient/       # Config service client
-			messaging/          # Message bus abstraction
-			observability/      # Metrics, logging, tracing helpers
-			domain/             # Shared domain types: Signal, Execution, etc.
-		ts/
-			sdk/                # TypeScript SDK for external consumers (future frontend/API)
+  libs/
+    go/
+      hyperliquid/        # Hyperliquid client + models (Go module)
+      configclient/       # Config service client (Go module)
+      messaging/          # Message bus abstraction (Go module)
+      observability/      # Metrics, logging, tracing helpers (Go module)
+      domain/             # Shared domain types: Signal, Execution, etc. (Go module)
+    ts/
+      sdk/                # TypeScript SDK for external consumers (future frontend/API)
 
-	proto/
-		bus/                  # Protobuf schemas for message topics
-		api/                  # Service API definitions (e.g., config-api)
+  proto/
+    bus/                  # Protobuf schemas for message topics
+    api/                  # Service API definitions (e.g., config-api)
 
-	infra/
-		k8s/                  # Kubernetes manifests / Helm charts
-		terraform/            # Cloud infra (message bus, databases, observability stacks)
-		docker/               # Base Dockerfiles and build tooling
+  infra/
+    message-bus/          # Kafka / message bus config, topics, local overrides
+    monitoring/           # Monitoring & observability stack (Prometheus, Grafana, Loki, etc.)
+    k8s/                  # Kubernetes manifests / Helm charts
+    terraform/            # Cloud infra (message bus, databases, observability stacks)
+    docker/               # Base Dockerfiles and build tooling
 
-	tools/
-		ci/                   # CI/CD pipelines, lint/test tools
-		scripts/              # Local dev scripts (bootstrap, dev env)
+  tools/
+    ci/                   # CI/CD pipelines, lint/test tools
+    scripts/              # Local dev scripts (bootstrap, dev env)
 
-	config/
-		base/                 # Base configs shared across envs
-		dev/
-		staging/
-		prod/
+  config/
+    base/                 # Base configs shared across envs
+    dev/
+    staging/
+    prod/
 ```
 
 ### 2.2 Build and Dependency Management
 
-- **Golang**
-  - Use a Go workspace (`go.work`) to manage multiple Go modules (one per service or a small set of service + shared libs modules).
-  - Example modules:
-    - `services/ingestion`
-    - `services/matcher`
-    - `libs/go/domain`
-- **Typescript**
-  - Use `pnpm` or `yarn` workspaces for TypeScript libraries (starting with `libs/ts/sdk`).
-  - Shared TypeScript config via `tsconfig.base.json`.
+- **Golang services and libraries**
+  - Each Go-based service (for example `matcher`, `planner`, `worker`, `analytics-processor`) is a standalone Go module with its own `go.mod` at the service folder root.
+  - Services can optionally use a local `go.work` file within their folder to compose internal submodules if needed.
+  - Shared Go libraries live under `libs/go` (for example `libs/go/domain`, `libs/go/messaging`) and are imported by Go services via standard module references.
+- **Node.js / TypeScript services and libraries**
+  - Node.js/TypeScript services (for example `ingestion` if implemented in Node, any future `api-gateway`) own their own `package.json` and local workspace config (Nx, pnpm, or yarn workspaces).
+  - Shared TypeScript code and generated clients live under `libs/ts` (starting with `libs/ts/sdk`), which can be consumed by both Node services and external clients.
+  - Shared TypeScript compiler options are expressed via a base `tsconfig.base.json` that service-local `tsconfig.json` files extend.
 - **Proto / contracts**
-  - `buf` or `protoc`-based pipeline to generate Go and TypeScript clients from `.proto` definitions into respective `libs/` directories.
+  - `buf` or `protoc`-based pipeline generates Go and TypeScript/JavaScript clients from `.proto` definitions into the corresponding `libs/go` and `libs/ts` directories.
 
 ### 2.3 Testing & Quality Gates
 
@@ -202,15 +205,19 @@ vibe-copy-trading/
 
 ---
 
-## 3. Language Choices (Go and TypeScript)
+## 3. Language Choices (Go and Node/TypeScript)
 
-We will use **Golang** for all core backend services in this monorepo and **TypeScript** for SDKs and future user-facing or external integration layers.
+We will use **Golang** and **Node.js/TypeScript** for core backend services in this monorepo, and **TypeScript** for SDKs and future user-facing or external integration layers.
 
-### 3.1 Golang for Core Services
+### 3.1 Go and Node for Core Services
 
-**Services in Go**
+**Services in Go (performance-critical pipeline)**
 
-- `ingestion`, `config-api`, `matcher`, `planner`, `worker`, `analytics-processor`.
+- Typically `matcher`, `planner`, `worker`, `analytics-processor`, and `config-api` are implemented in Go to optimize throughput, latency, and operational simplicity.
+
+**Services that may be Go or Node.js**
+
+- `ingestion` and any HTTP/API-facing or integration-heavy services (for example a future `api-gateway`) can be implemented either in Go or in Node.js/TypeScript, depending on ecosystem fit and developer experience.
 
 **Reasons**
 
@@ -227,12 +234,12 @@ We will use **Golang** for all core backend services in this monorepo and **Type
   - Single static binary per service, simple container images.
   - Easier cross-platform builds and smaller runtime surface area.
 
-### 3.2 TypeScript for SDKs and External Integrations
+### 3.2 TypeScript for SDKs, Node Services, and External Integrations
 
 **Components in TypeScript**
 
 - `libs/ts/sdk`: Client SDKs for future web/mobile apps or external integrators.
-- Any thin API gateway or BFF (in future phases) can be in TypeScript/Node.js if needed, using the same contracts.
+- Node.js-based services (for example a Node implementation of `ingestion` or an `api-gateway`) use TypeScript and the same generated contracts as Go services.
 
 **Reasons**
 

@@ -296,6 +296,7 @@
 - Core services are backend-only, exposed via internal APIs and message bus; separate components (not in this PRD) will handle user interfaces and external API exposure.
 - Subscribers manage funding and account connectivity to Hyperliquid via systems outside this PRD.
 - Business logic for fee models, revenue sharing, and regulatory compliance may use the data produced here but are defined elsewhere.
+- Implementation languages: core pipeline services are primarily implemented in Go, with the architecture explicitly allowing selected services (for example ingestion adapters or HTTP APIs) to be implemented in Node.js/TypeScript where that is a better fit. Detailed language choices are defined in TECHNICAL_SPECS.
 
 ### 10. Phased Delivery (Core)
 
