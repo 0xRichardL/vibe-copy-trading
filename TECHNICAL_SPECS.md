@@ -26,21 +26,21 @@ The logical components from the PRD are realized as the following stateless serv
   - Stateless workers each handle a subset of influencers (partitioned by `influencer_id` hash or explicit sharding configuration).
   - Automatic reconnect/backoff per connection; connection pools per region.
 
-### 1.2 Configuration Service ("config-api")
+### 1.2 Configuration Layer (shared library + store, MVP)
 
 - **Responsibility**
   - Provide read-only access to configuration for Influencers, Subscribers, and Subscriptions.
-  - Cache configuration in-memory and/or via a distributed cache for low-latency lookups.
-  - Support cache invalidation and periodic refresh (e.g., polling an external config DB or receiving change events).
+  - Centralize configuration loading, validation, and basic caching in a shared library (for example `libs/go/configclient`).
+  - Read from an underlying config store (e.g., Postgres, MySQL, or key-value store).
 - **Key interfaces**
   - **Inbound**:
-    - Admin/external config source (out of scope for this core, assumed to be a DB or config service).
-    - Internal GRPC/HTTP from matcher/execution services (read-only calls).
+    - Admin/external config source (out of scope for this core, assumed to be a DB or config service) writes to the underlying store.
+    - Internal calls from matcher/planner/worker/ingestion use the shared config library or direct DB client.
   - **Outbound**:
-    - Underlying config store (e.g., Postgres, MySQL, or key-value store).
+    - Underlying config store.
 - **Scaling model**
-  - Stateless API nodes behind a load balancer.
-  - Aggressive caching of read operations (configuration is low-churn, read-heavy).
+  - No standalone service in the MVP; each service links the shared config library and talks to the config store directly.
+  - Future iterations may extract a dedicated configuration API service if needed.
 
 ### 1.3 Subscription Matcher Service ("matcher")
 
@@ -141,7 +141,6 @@ vibe-copy-trading/
   docker-compose.yml      # Local infra: message bus, DBs, monitoring stack
 
   ingestion/              # Signal Ingestion Service (e.g., Node.js with Nx or Go)
-  config-api/             # Configuration API (Go or Node.js)
   matcher/                # Subscription Matcher (Go or Node.js)
   planner/                # Execution Planner (Go or Node.js)
   worker/                 # Execution Worker (Go or Node.js)
@@ -159,7 +158,7 @@ vibe-copy-trading/
 
   proto/
     bus/                  # Protobuf schemas for message topics
-    api/                  # Service API definitions (e.g., config-api)
+    api/                  # Service API definitions (for any future APIs)
 
   infra/
     message-bus/          # Kafka / message bus config, topics, local overrides
@@ -213,7 +212,7 @@ We will use **Golang** and **Node.js/TypeScript** for core backend services in t
 
 **Services in Go (performance-critical pipeline)**
 
-- Typically `matcher`, `planner`, `worker`, `analytics-processor`, and `config-api` are implemented in Go to optimize throughput, latency, and operational simplicity.
+- Typically `matcher`, `planner`, `worker`, and `analytics-processor` are implemented in Go to optimize throughput, latency, and operational simplicity.
 
 **Services that may be Go or Node.js**
 
@@ -355,7 +354,7 @@ Given the requirements and the need for both real-time processing and historical
 
 ## 5. Summary
 
-- Core backend services (ingestion, config-api, matcher, planner, worker, analytics-processor) are implemented in Go for performance, operational simplicity, and concurrency.
+- Core backend services (ingestion, matcher, planner, worker, analytics-processor) are implemented in Go for performance, operational simplicity, and concurrency.
 - The monorepo organizes services, shared libraries, contracts, and infra in a way that supports polyglot development and strong consistency of interfaces.
 - TypeScript is used for SDKs and future client-facing layers, generated from shared contracts.
 - Kafka (managed) is selected as the message bus due to its streaming-first design, scalability, ecosystem maturity, and fit for both real-time processing and analytics replay.

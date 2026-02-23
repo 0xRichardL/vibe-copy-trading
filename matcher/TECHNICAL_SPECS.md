@@ -21,7 +21,7 @@
 
 - **Runtime:** Go.
 - **Message bus:** Kafka topics `influencer_signals`, `execution_requests`.
-- **Config:** Read-only config from config-api or cache.
+- **Config:** Read-only config from the shared config library/store (no standalone configuration API service in MVP).
 - **Libraries:** libs/go/domain, libs/go/messaging, libs/go/observability.
 
 (Detail internal modules, package layout, and dependency graph here.)
@@ -57,5 +57,5 @@
 ## 8. Operational Considerations (TBD)
 
 - Backpressure and lag handling.
-- Behavior under partial outages (config-api, bus, storage).
+- Behavior under partial outages (config store, bus, storage).
 - Deployment and scaling strategy.

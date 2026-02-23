@@ -22,7 +22,7 @@
 
 - **Runtime:** Go.
 - **Message bus:** Kafka topics `execution_requests`, `execution_jobs` (or equivalent pattern).
-- **Config:** Read-only config from config-api or cache.
+- **Config:** Read-only config from the shared config library/store (no standalone configuration API service in MVP).
 - **Libraries:** libs/go/domain, libs/go/messaging, libs/go/observability.
 
 (Detail internal modules, package layout, and dependency graph here.)
