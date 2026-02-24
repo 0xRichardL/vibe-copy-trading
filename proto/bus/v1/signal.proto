@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package bus.v1;
+
+option go_package = "github.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1;busv1";
+
+// Signal is the canonical normalized signal published to the influencer_signals topic.
+message Signal {
+  // Globally unique, deterministic ID for the signal.
+  string signal_id = 1;
+
+  // Internal ID or reference for the influencer (not necessarily the raw Hyperliquid address).
+  string influencer_id = 2;
+
+  // Exchange identifier, e.g. "hyperliquid".
+  string exchange = 3;
+
+  // Hyperliquid market identifier (e.g., "ETH-PERP").
+  string market = 4;
+
+  // Semantic action: OPEN, CLOSE, INCREASE, DECREASE, FLIP.
+  string action = 5;
+
+  // Resulting position side after the event: LONG, SHORT, FLAT.
+  string side = 6;
+
+  // Resulting position size after applying this event (base units).
+  double size = 7;
+
+  // Signed change in position size from the previous state.
+  double delta_size = 8;
+
+  // Relevant execution or average entry price.
+  double price = 9;
+
+  // Event time from Hyperliquid in Unix millis.
+  int64 timestamp_ms = 10;
+
+  // Reference to the underlying Hyperliquid event (e.g., tx hash / event ID / sequence).
+  string source_event_id = 11;
+
+  // Optional free-form metadata (e.g., leverage, margin mode, raw symbol).
+  map<string, string> metadata = 12;
+}

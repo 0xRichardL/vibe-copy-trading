@@ -1,0 +1,7 @@
+version: v2
+
+plugins:
+  - plugin: buf.build/protocolbuffers/go
+    out: proto/gen/go
+    opt:
+      - paths=source_relative
