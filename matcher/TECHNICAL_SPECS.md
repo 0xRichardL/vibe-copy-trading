@@ -87,18 +87,48 @@ The matcher emits an **ExecutionRequest** for each (subscriber, signal) pair tha
 
 Downstream services (planner, worker, and execution adapters) consume `ExecutionRequest` messages and translate them into venue-specific orders while preserving idempotency guarantees via `execution_request_id`.
 
-## 6. Partitioning & Scaling (TBD)
+## 6. Flows
+
+### 6.1 Subscription Adding / Updating Flow
+
+This flow describes how new subscriptions are created or existing ones are modified and made visible to the matcher.
+
+1. A user or upstream subscription service creates/updates a Subscription (see §5.1) via an external API/UI.
+2. The subscription service persists the Subscription in the system of record and projects a matcher-friendly representation into Redis (e.g., hash or JSON blob keyed by `subscription_id` and indexed by `influencer_id`).
+3. The matcher maintains a read-only view of subscriptions by querying Redis:
+   - On-demand lookups by `influencer_id` during matching, and/or
+   - Periodic background refresh / warm-up of caches for hot influencers.
+4. When a subscription is created, updated, or cancelled, the subscription service updates Redis accordingly (e.g., status, market filters, sizing parameters).
+5. Subsequent signals for the affected `influencer_id` immediately see the updated subscription state (subject to Redis propagation and any local cache TTLs).
+
+### 6.2 Matching Flow
+
+This flow describes how an inbound influencer signal is transformed into one or more ExecutionRequests.
+
+1. Ingestion publishes a normalized influencer signal to the `influencer_signals` Kafka topic.
+2. The matcher Kafka consumer (part of this service) receives the message and deserializes it into the internal signal domain model.
+3. The matcher resolves all ACTIVE subscriptions for the signal's `influencer_id` using Redis indices/lookups.
+4. For each candidate Subscription, the matcher applies filters:
+   - Status (must be ACTIVE).
+   - Market filters (e.g., `allowed_markets`).
+   - Basic pre-risk checks (e.g., `max_notional_per_signal`, `max_open_notional`).
+5. For each Subscription that passes filters, the matcher computes the desired trade size (quantity/notional) based on `size_mode`, `size_value`, leverage, and the signal payload.
+6. The matcher constructs an `ExecutionRequest` (see §5.2) including identifiers, market/side/order parameters, and risk evaluation flags.
+7. The matcher publishes one message per (subscriber, signal) pair to the `execution_requests` Kafka topic, ensuring idempotency via `execution_request_id` and any necessary producer semantics.
+8. Downstream services (planner, worker, execution adapters) consume `ExecutionRequest` messages and continue the lifecycle of the order.
+
+## 7. Partitioning & Scaling (TBD)
 
 - Consumer group strategy (partition by influencer or market).
 - Sharding and horizontal scaling patterns.
 
-## 7. Observability (TBD)
+## 8. Observability (TBD)
 
 - Metrics (signals/sec, matches/sec, fan-out ratio, errors).
 - Logs (filter decisions, drops, and failures).
 - Traces (per-signal matching spans in the end-to-end trace).
 
-## 8. Operational Considerations (TBD)
+## 9. Operational Considerations (TBD)
 
 - Backpressure and lag handling.
 - Behavior under partial outages (config store, bus, storage).
