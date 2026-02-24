@@ -6,7 +6,7 @@
 
 - **Service name:** matcher
 - **Primary role:** Consume normalized influencer signals, resolve active subscriptions, apply filters, and emit execution requests.
-- **Tech stack:** Go (performance-critical core).
+- **Tech stack:** Go / Golang (performance-critical core).
 
 ## 2. Responsibilities (Summary)
 
@@ -19,8 +19,9 @@
 
 ## 3. Architecture & Dependencies (TBD)
 
-- **Runtime:** Go.
+- **Runtime:** Go / Golang.
 - **Message bus:** Kafka topics `influencer_signals`, `execution_requests`.
+- **Database:** Redis (primary data store/cache for matcher state and subscriptions lookup).
 - **Config:** Read-only config from the shared config library/store (no standalone configuration API service in MVP).
 - **Libraries:** libs/go/domain, libs/go/messaging, libs/go/observability.
 
@@ -30,7 +31,7 @@
 
 ### 4.1 Inbound
 
-- Kafka topic `influencer_signals` (normalized signals schema).
+- Kafka topic `influencer_signals` (normalized signals schema) produced by the ingestion service.
 
 ### 4.2 Outbound
 
@@ -38,10 +39,53 @@
 
 (Reference or link to proto/contracts definitions once defined.)
 
-## 5. Data Contracts (TBD)
+## 5. Data Contracts
 
 - `ExecutionRequest` schema.
-- Subscription filter configuration model.
+- Subscription model and filter configuration model.
+
+### 5.1 Subscription Model
+
+The matcher operates on a logical **Subscription** entity that links a follower (subscriber) to an influencer and defines how signals should be copied.
+
+- `subscription_id`: stable unique identifier for the subscription.
+- `influencer_id`: identifier of the source influencer whose signals are copied.
+- `subscriber_id`: identifier of the follower account that will receive executions.
+- `status`: enum (e.g., ACTIVE, PAUSED, CANCELLED) used to determine eligibility for matching.
+- `allowed_markets`: optional list of market symbols / instruments this subscription applies to; empty means "all markets".
+- `size_mode`: enum describing sizing semantics (e.g., NOTIONAL, SIZE_FACTOR, FIXED_SIZE).
+- `size_value`: numeric parameter whose interpretation depends on `size_mode` (e.g., notional amount, multiplier vs influencer size, or fixed quantity).
+- `max_notional_per_signal`: optional per-signal notional cap for risk limiting.
+- `max_open_notional`: optional cap on total open exposure created by this subscription.
+- `leverage`: optional leverage override or multiplier relative to influencer leverage, if applicable.
+- `created_at` / `updated_at`: timestamps for auditing and replay.
+
+The matcher resolves the set of ACTIVE subscriptions for a given `influencer_id`, applies any market and risk filters (e.g., `allowed_markets`, caps), and generates one `ExecutionRequest` per (subscriber, signal) pair that passes all checks.
+
+### 5.2 ExecutionRequest Model (Outbound)
+
+The matcher emits an **ExecutionRequest** for each (subscriber, signal) pair that passes all filters. This is the payload on the `execution_requests` Kafka topic.
+
+- `execution_request_id`: stable unique identifier for idempotency and de-duplication downstream.
+- `signal_id`: identifier of the originating influencer signal.
+- `influencer_id`: identifier of the influencer that produced the signal.
+- `subscriber_id`: identifier of the follower account that will execute the trade.
+- `subscription_id`: identifier tying the request back to the subscription that produced it.
+- `market`: symbol / instrument identifier (e.g., BTC-PERP, ETH-PERP).
+- `side`: enum (BUY / SELL / OPEN / CLOSE) depending on venue semantics.
+- `order_type`: enum (e.g., MARKET, LIMIT) describing desired order style.
+- `quantity`: base asset quantity to trade, if applicable.
+- `notional`: notional size in quote currency, if applicable.
+- `price`: optional limit price when `order_type` requires it.
+- `leverage`: effective leverage to apply, if supported by the venue.
+- `time_in_force`: enum (e.g., GTC, IOC, FOK) for order lifetime semantics.
+- `risk_checks_passed`: boolean or enum indicating pre-risk evaluation result at match time.
+- `rejection_reason`: optional string/enum populated if `risk_checks_passed` is false.
+- `source`: enum/tag describing the upstream source (e.g., MATCHER_V1).
+- `created_at`: timestamp when the execution request was created.
+- `trace_id` / `correlation_id`: identifiers for end-to-end tracing and debugging.
+
+Downstream services (planner, worker, and execution adapters) consume `ExecutionRequest` messages and translate them into venue-specific orders while preserving idempotency guarantees via `execution_request_id`.
 
 ## 6. Partitioning & Scaling (TBD)
 

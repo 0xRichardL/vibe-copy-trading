@@ -6,7 +6,7 @@
 
 - **Service name:** Ingestion
 - **Primary role:** Maintain connections to Hyperliquid for configured influencer addresses, ingest and normalize events into canonical `Signal` objects, and publish them to the `influencer_signals` topic.
-- **Tech stack:** Go or Node.js/TypeScript (see root language choices).
+- **Tech stack:** Go (service implementation), Redis (influencer/config store), Kafka.
 
 ## 2. Responsibilities (Summary)
 
@@ -20,18 +20,23 @@
 
 ## 3. Architecture & Dependencies
 
-- **Runtime:** Go or Node.js/TS.
+- **Runtime:** Go.
 - **Message bus:** Kafka topic `influencer_signals`.
-- **Config source:** Read-only configuration from a shared config library/store (no standalone configuration API service in MVP).
-- **Libraries:**
-  - Go: libs/go/hyperliquid, libs/go/messaging, libs/go/observability, libs/go/domain (if implemented in Go).
-  - Node: libs/ts/sdk and generated contracts (if implemented in Node).
+- **Config / influencer store:**
+  - Redis as the source of truth for influencer accounts and per-influencer settings.
+  - Shared config library/store (read-only) for non-influencer service configuration (endpoints, retry policies, etc.).
+- **Libraries (Go):**
+  - libs/go/hyperliquid (Hyperliquid WebSocket/REST client).
+  - libs/go/messaging (Kafka producer abstraction).
+  - libs/go/observability (metrics, logs, traces).
+  - libs/go/domain (shared domain types including `Signal`).
 
 ### 3.1 High-Level Ingestion Flow
 
 1. **Startup & configuration**
-  - Load list of influencer accounts and per-influencer settings (markets of interest, throttling, etc.) from the shared config library/store.
-   - For each influencer, initialize a logical "connection context" (state: last processed seq/ID per market, backoff state, metrics handles).
+
+- Load list of influencer accounts and per-influencer settings (markets of interest, throttling, etc.) from Redis via the shared config/influencer library.
+- For each influencer, initialize a logical "connection context" (state: last processed seq/ID per market, backoff state, metrics handles).
 
 2. **WebSocket subscription (primary path)**
    - Establish and maintain a Hyperliquid WebSocket connection (or connection pool) using the Hyperliquid client library.
@@ -126,12 +131,13 @@ Minimal ingestion-time view of a `Signal` (exact formal schema lives in shared d
 
 ## 6. Configuration
 
-- **Influencers**
-  - List of influencer accounts/addresses and optional metadata (internal ID, label, priority, markets of interest).
-  - Per-influencer overrides for:
+- **Influencers (Redis-backed)**
+  - Influencer accounts/addresses and optional metadata (internal ID, label, priority, markets of interest) stored in Redis.
+  - Per-influencer overrides stored in Redis for:
     - Subscribed markets.
     - Max concurrency / parallel streams.
     - Backoff/retry tuning.
+  - Ingestion service reads this configuration on startup and may periodically refresh or subscribe to change notifications (if available).
 
 - **Connection & retry**
   - WebSocket endpoint(s) and REST base URL(s).
