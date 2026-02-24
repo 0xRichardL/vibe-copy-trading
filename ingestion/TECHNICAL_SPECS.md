@@ -5,16 +5,16 @@
 ## 1. Overview
 
 - **Service name:** Ingestion
-- **Primary role:** Maintain connections to Hyperliquid for configured influencer addresses, ingest and normalize events into canonical `Signal` objects, and publish them to the `influencer_signals` topic.
+- **Primary role:** Maintain redundant connections to Hyperliquid for configured influencer addresses, ingest and normalize events into canonical `Signal` objects, and publish them to the `influencer_signals` topic while minimizing dropped signals.
 - **Tech stack:** Go (service implementation), Redis (influencer/config store), Kafka.
 
 ## 2. Responsibilities (Summary)
 
-- Maintain resilient WebSocket/REST connections to Hyperliquid for configured influencer accounts.
+- Maintain resilient, redundant WebSocket connections to Hyperliquid for configured influencer accounts (double-listener strategy).
 - Subscribe to influencer account-level streams (fills, orders, and/or position updates) and detect changes in effective position per market.
 - Derive canonical `Signal` objects from those events (e.g., OPEN/CLOSE/INCREASE/DECREASE position for a given market).
-- Ensure idempotent processing (deduplication by stable event IDs / sequence numbers per influencer+market).
-- Persist raw Hyperliquid events for audit/backfill and emit normalized `Signal` messages to the `influencer_signals` topic.
+- Ensure idempotent processing (deduplication by stable event IDs / sequence numbers per influencer+market across both listeners).
+- Persist raw Hyperliquid events for audit and emit normalized `Signal` messages to the `influencer_signals` topic.
 
 > See system-level responsibilities in ../TECHNICAL_SPECS.md §1.1.
 
@@ -26,7 +26,7 @@
   - Redis as the source of truth for influencer accounts and per-influencer settings.
   - Shared config library/store (read-only) for non-influencer service configuration (endpoints, retry policies, etc.).
 - **Libraries (Go):**
-  - libs/go/hyperliquid (Hyperliquid WebSocket/REST client).
+  - libs/go/hyperliquid (Hyperliquid WebSocket client and related helpers).
   - libs/go/messaging (Kafka producer abstraction).
   - libs/go/observability (metrics, logs, traces).
   - libs/go/domain (shared domain types including `Signal`).
@@ -51,18 +51,19 @@
      - Normalize to a `Signal` (see §5) representing the resulting position change.
      - Publish the `Signal` to Kafka topic `influencer_signals`.
 
-3. **REST backfill & reconciliation (secondary path)**
-   - On startup, and after reconnects, query Hyperliquid REST APIs to:
-     - Fetch current open positions per influencer+market.
-     - Optionally fetch recent fills over a configurable lookback window.
-   - Reconcile REST state with last processed WebSocket state to:
-     - Fill gaps during downtime.
-     - Correct any missed or out-of-order events.
+3. **Double-listener redundancy (secondary path)**
+
+- For every influencer, maintain two independent listener loops that consume the same subscription set.
+- Listeners can share a physical WebSocket connection or operate on separate connections when fan-out pressure is high; either way, messages flow into isolated pipelines.
+- Each listener forwards events into a deduplicating fan-in queue using deterministic event IDs, ensuring downstream processing is single-writer per influencer+market.
+- If the primary listener lags or disconnects, the secondary stream continues emitting signals; the unhealthy listener can reconnect in the background without halting signal emission.
+- Periodic health probes compare listener lag/skew and rotate primaries to avoid starvation.
 
 4. **Resilience & lifecycle**
    - Auto-reconnect on WebSocket errors with exponential backoff and jitter.
-   - Re-subscribe all active influencer channels after reconnection.
-   - Use watchdogs/heartbeats to detect stale connections and trigger reconnect/backfill.
+
+- Re-subscribe all active influencer channels after reconnection for both listeners.
+- Use watchdogs/heartbeats to detect stale connections per listener and trigger targeted reconnect/failover.
 
 > Implementation details (packages, concurrency model, and internal modules) are defined in the service repo code-level docs.
 
@@ -74,14 +75,7 @@
   - Channel type: account/user-level events for configured influencer addresses.
   - Subscriptions: per-influencer subscriptions for fills, orders, and/or position updates (exact channel names per Hyperliquid docs).
   - Auth: API key / account auth model as required by Hyperliquid.
-  - Rate/connection limits: respect Hyperliquid guidelines (max concurrent connections, message rate, subscription fan-out). Prefer multiplexing multiple influencers over shared connections where possible.
-
-- **Hyperliquid REST API**
-  - Endpoints: positions, recent trades/fills, account state.
-  - Usage:
-    - Startup snapshot of positions.
-    - Backfill after reconnects.
-    - Periodic reconciliation (optional).
+  - Rate/connection limits: respect Hyperliquid guidelines (max concurrent connections, message rate, subscription fan-out). Prefer multiplexing multiple influencers over shared connections where possible while still provisioning two logical listeners per influencer.
 
 ### 4.2 Outbound
 
@@ -90,7 +84,7 @@
   - Delivery semantics: at-least-once from ingestion; downstream consumers must handle idempotency via `signalId`/event keys.
 
 - **Raw events storage**
-  - Store unmodified Hyperliquid events (WebSocket and REST responses) in an append-only store (e.g., OLAP table or log stream).
+  - Store unmodified Hyperliquid WebSocket events in an append-only store (e.g., OLAP table or log stream).
   - Keyed by influencer, market, event type, and event ID/sequence for audit and replay.
 
 > Reference proto/contracts definitions for `Signal` and raw event envelopes once defined at the system level.
@@ -140,13 +134,12 @@ Minimal ingestion-time view of a `Signal` (exact formal schema lives in shared d
   - Ingestion service reads this configuration on startup and may periodically refresh or subscribe to change notifications (if available).
 
 - **Connection & retry**
-  - WebSocket endpoint(s) and REST base URL(s).
-  - Connection limits and shared-connection vs. per-influencer connection strategy.
-  - Backoff policy (initial delay, max delay, jitter) for reconnects.
+  - WebSocket endpoint(s) and listener allocation strategy (shared connection vs. dedicated per influencer per listener).
+  - Connection limits that account for dual listeners without violating Hyperliquid quotas.
+  - Backoff policy (initial delay, max delay, jitter) for reconnects per listener, including failover thresholds.
 
 - **Idempotency & state**
-  - Storage for last processed event ID/sequence per influencer+market.
-  - Lookback window for REST backfill.
+  - Storage for last processed event ID/sequence per influencer+market shared across both listeners.
 
 - **Kafka / storage**
   - Kafka brokers, topic config, and producer tuning (batch size, linger, acks).
@@ -155,33 +148,35 @@ Minimal ingestion-time view of a `Signal` (exact formal schema lives in shared d
 ## 7. Observability
 
 - **Metrics**
-  - Active WebSocket connections and reconnect count.
+  - Active WebSocket connections and reconnect count, segmented by listener role (primary/secondary).
+  - Listener lag/skew and failover frequency.
   - Messages received/sec per influencer+market and per channel type.
   - Signals emitted/sec and per-action breakdown.
   - Deduplicated/dropped events counts.
-  - WebSocket/REST error rates and latency.
+  - WebSocket error rates and latency.
 
 - **Logs**
-  - Connection lifecycle (connect, disconnect, reconnect, auth failures).
+  - Connection lifecycle (connect, disconnect, reconnect, auth failures) per listener.
   - Subscription changes (influencer added/removed, resubscribe events).
+  - Listener failover decisions and dedupe outcomes.
   - Ingestion and normalization failures (with references to `sourceEventId`).
 
 - **Traces**
-  - Spans from raw Hyperliquid event reception through `Signal` publish to Kafka.
+  - Spans from raw Hyperliquid event reception (per listener) through `Signal` publish to Kafka.
   - Correlation IDs tying `Signal` to raw events and downstream processing.
 
 ## 8. Operational Considerations
 
 - **Rate limiting & backpressure**
-  - Respect Hyperliquid rate limits; throttle subscription and REST calls.
+  - Respect Hyperliquid rate limits; throttle subscription fan-out and connection churn while maintaining double listeners.
   - Apply internal backpressure when Kafka or raw storage is slow (e.g., bounded queues, shedding low-priority signals if configured).
 
 - **Failure modes & recovery**
-  - WebSocket disconnects and transient network errors handled via reconnect+backfill.
+  - WebSocket disconnects and transient network errors handled via listener-specific reconnect with automatic failover to the healthy listener (no external replay phase assumed).
   - Poison events (malformed or repeatedly failing normalization) routed to a dead-letter path with alerts.
   - Idempotent reprocessing across restarts using stored last event IDs/sequences.
 
 - **Deployment & scaling**
-  - Horizontal scaling via partitioning influencers across ingestion instances.
+  - Horizontal scaling via partitioning influencers across ingestion instances while budgeting for redundant listeners per influencer allocation.
   - Ensure signal ordering guarantees per influencer+market (e.g., pin those to a single worker or ordered Kafka partitioning scheme).
-  - Safe rollout/rollback via blue-green or canary deployments, with close monitoring of signal rates and error metrics.
+  - Safe rollout/rollback via blue-green or canary deployments, with close monitoring of signal rates, listener health, and error metrics.

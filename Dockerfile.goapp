@@ -1,0 +1,38 @@
+# --- Build Stage ---
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /workspace
+
+# Ensure go commands always see the workspace file regardless of the cwd
+ENV GOWORK=/workspace/go.work
+
+# Accept and validate which service to build
+ARG SERVICE
+RUN test -n "${SERVICE}" || (echo "SERVICE build arg is required" >&2 && exit 1)
+# Copy the entire monorepo so go.work can resolve every module
+
+COPY go.work .
+COPY go.work.sum .
+COPY libs/go libs/go
+COPY ${SERVICE} ${SERVICE}
+
+RUN go work sync
+
+WORKDIR /workspace/${SERVICE}
+# Build a static binary that runs cleanly in the minimal runner image
+RUN CGO_ENABLED=0 go build -o /app/main ./main.go
+
+# --- Final Stage ---
+FROM alpine:latest AS runner
+
+# Install CA certs so HTTPS clients work, then drop privileges
+RUN apk add --no-cache ca-certificates \
+	&& addgroup -S appgroup \
+	&& adduser -S appuser -G appgroup
+
+USER appuser
+WORKDIR /home/appuser/app
+
+COPY --from=builder /app/main .
+
+CMD ["./main"]
