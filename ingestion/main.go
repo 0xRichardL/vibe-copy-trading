@@ -21,10 +21,7 @@ func main() {
 		logger.Fatalf("failed to load config: %v", err)
 	}
 
-	app, err := service.NewApp(ctx, cfg, logger)
-	if err != nil {
-		logger.Fatalf("failed to initialize app: %v", err)
-	}
+	app := service.NewApp(cfg, logger)
 
 	if err := app.Run(ctx); err != nil {
 		logger.Fatalf("service exited with error: %v", err)

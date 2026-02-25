@@ -2,10 +2,13 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"sync"
 	"time"
+
+	busv1 "github.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1"
+	"github.com/0xRichardL/vibe-copy-trading/libs/go/routine"
 )
 
 // App wires together configuration, Redis, Hyperliquid client, and Kafka
@@ -19,7 +22,10 @@ type App struct {
 	publisher *SignalPublisher
 }
 
-func NewApp(ctx context.Context, cfg Config, logger *log.Logger) (*App, error) {
+// SignalHandler processes normalized signals prior to downstream distribution.
+type SignalHandler func(context.Context, *busv1.Signal) error
+
+func NewApp(cfg Config, logger *log.Logger) *App {
 	store := NewInfluencerStore(cfg)
 	client := NewHyperliquidClient(cfg, logger)
 	publisher := NewSignalPublisher(cfg)
@@ -30,7 +36,7 @@ func NewApp(ctx context.Context, cfg Config, logger *log.Logger) (*App, error) {
 		store:     store,
 		client:    client,
 		publisher: publisher,
-	}, nil
+	}
 }
 
 // Run starts the ingestion loops for all configured influencers.
@@ -47,25 +53,36 @@ func (a *App) Run(ctx context.Context) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	manager := routine.NewManager(ctx)
 
-	var wg sync.WaitGroup
-
-	for _, inf := range influencers {
-		wg.Go(func() {
-			if err := a.runForInfluencer(ctx, inf); err != nil {
-				a.logger.Printf("ingestion loop for influencer %s exited: %v", inf.ID, err)
-			}
-		})
+	for _, influencer := range influencers {
+		inf := influencer
+		task := &routine.Task{
+			ID: inf.ID,
+			Handler: func(taskCtx context.Context) error {
+				return a.streamInfluencerEvents(taskCtx, inf)
+			},
+			OnError: func(id string, err error) {
+				a.logger.Printf("ingestion loop for influencer %s exited: %v", id, err)
+			},
+		}
+		if err := manager.RunTask(task); err != nil {
+			return fmt.Errorf("start task for %s: %w", inf.ID, err)
+		}
 	}
 
 	<-ctx.Done()
-	wg.Wait()
+
+	for _, inf := range influencers {
+		if err := manager.Shutdown(inf.ID); err != nil && !errors.Is(err, routine.ErrRoutineNotFound) {
+			a.logger.Printf("graceful shutdown warning for %s: %v", inf.ID, err)
+		}
+	}
+
 	return ctx.Err()
 }
 
-func (a *App) runForInfluencer(ctx context.Context, inf Influencer) error {
+func (a *App) streamInfluencerEvents(ctx context.Context, inf Influencer) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -73,22 +90,7 @@ func (a *App) runForInfluencer(ctx context.Context, inf Influencer) error {
 		default:
 		}
 
-		handler := func(raw RawHyperliquidEvent, received time.Time) error {
-			if raw == nil {
-				return nil
-			}
-
-			sig, err := NormalizeEventToSignal(inf, raw, received)
-			if err != nil {
-				return err
-			}
-
-			ctxPub, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			return a.publisher.Publish(ctxPub, sig)
-		}
-
-		if err := a.client.SubscribeAccountEvents(ctx, inf, handler); err != nil {
+		if err := a.client.SubscribeAccountEvents(ctx, inf, a.handleSignal); err != nil {
 			a.logger.Printf("SubscribeAccountEvents error for %s: %v; retrying after backoff", inf.ID, err)
 			select {
 			case <-ctx.Done():
@@ -97,6 +99,16 @@ func (a *App) runForInfluencer(ctx context.Context, inf Influencer) error {
 			}
 		}
 	}
+}
+
+func (a *App) handleSignal(ctx context.Context, sig *busv1.Signal) error {
+	if sig == nil {
+		return nil
+	}
+
+	ctxPub, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return a.publisher.Publish(ctxPub, sig)
 }
 
 func (a *App) cleanup() {

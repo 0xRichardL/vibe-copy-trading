@@ -38,7 +38,7 @@ func NewHyperliquidClient(cfg Config, logger *log.Logger) *HyperliquidClient {
 func (c *HyperliquidClient) SubscribeAccountEvents(
 	ctx context.Context,
 	inf Influencer,
-	handler func(RawHyperliquidEvent, time.Time) error,
+	handler SignalHandler,
 ) error {
 	if handler == nil {
 		return errors.New("SubscribeAccountEvents: handler is required")
@@ -55,8 +55,8 @@ func (c *HyperliquidClient) SubscribeAccountEvents(
 		}
 	}()
 
-	deadline := 5 * time.Second
-	if err := ws.SetDeadline(time.Now().Add(deadline)); err != nil {
+	deadline := time.Now().Add(5 * time.Second)
+	if err := ws.SetDeadline(deadline); err != nil {
 		c.logger.Printf("set deadline warning for %s: %v", inf.ID, err)
 	}
 
@@ -80,7 +80,15 @@ func (c *HyperliquidClient) SubscribeAccountEvents(
 		}
 
 		received := time.Now().UTC()
-		if err := handler(msg, received); err != nil && !errors.Is(err, context.Canceled) {
+		sig, err := NormalizeEventToSignal(inf, msg, received)
+		if err != nil {
+			c.logger.Printf("normalize event error for influencer %s: %v", inf.ID, err)
+			continue
+		}
+		if sig == nil {
+			continue
+		}
+		if err := handler(ctx, sig); err != nil && !errors.Is(err, context.Canceled) {
 			c.logger.Printf("handler error for influencer %s: %v", inf.ID, err)
 		}
 	}
