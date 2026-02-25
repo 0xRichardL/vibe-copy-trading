@@ -21,6 +21,118 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// SignalAction enumerates the semantic action represented by a signal.
+type SignalAction int32
+
+const (
+	SignalAction_SIGNAL_ACTION_UNSPECIFIED SignalAction = 0
+	SignalAction_SIGNAL_ACTION_OPEN        SignalAction = 1
+	SignalAction_SIGNAL_ACTION_CLOSE       SignalAction = 2
+	SignalAction_SIGNAL_ACTION_INCREASE    SignalAction = 3
+	SignalAction_SIGNAL_ACTION_DECREASE    SignalAction = 4
+	SignalAction_SIGNAL_ACTION_FLIP        SignalAction = 5
+)
+
+// Enum value maps for SignalAction.
+var (
+	SignalAction_name = map[int32]string{
+		0: "SIGNAL_ACTION_UNSPECIFIED",
+		1: "SIGNAL_ACTION_OPEN",
+		2: "SIGNAL_ACTION_CLOSE",
+		3: "SIGNAL_ACTION_INCREASE",
+		4: "SIGNAL_ACTION_DECREASE",
+		5: "SIGNAL_ACTION_FLIP",
+	}
+	SignalAction_value = map[string]int32{
+		"SIGNAL_ACTION_UNSPECIFIED": 0,
+		"SIGNAL_ACTION_OPEN":        1,
+		"SIGNAL_ACTION_CLOSE":       2,
+		"SIGNAL_ACTION_INCREASE":    3,
+		"SIGNAL_ACTION_DECREASE":    4,
+		"SIGNAL_ACTION_FLIP":        5,
+	}
+)
+
+func (x SignalAction) Enum() *SignalAction {
+	p := new(SignalAction)
+	*p = x
+	return p
+}
+
+func (x SignalAction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SignalAction) Descriptor() protoreflect.EnumDescriptor {
+	return file_bus_v1_signal_proto_enumTypes[0].Descriptor()
+}
+
+func (SignalAction) Type() protoreflect.EnumType {
+	return &file_bus_v1_signal_proto_enumTypes[0]
+}
+
+func (x SignalAction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SignalAction.Descriptor instead.
+func (SignalAction) EnumDescriptor() ([]byte, []int) {
+	return file_bus_v1_signal_proto_rawDescGZIP(), []int{0}
+}
+
+// SignalSide captures the resulting position orientation after a signal is applied.
+type SignalSide int32
+
+const (
+	SignalSide_SIGNAL_SIDE_UNSPECIFIED SignalSide = 0
+	SignalSide_SIGNAL_SIDE_LONG        SignalSide = 1
+	SignalSide_SIGNAL_SIDE_SHORT       SignalSide = 2
+	SignalSide_SIGNAL_SIDE_FLAT        SignalSide = 3
+)
+
+// Enum value maps for SignalSide.
+var (
+	SignalSide_name = map[int32]string{
+		0: "SIGNAL_SIDE_UNSPECIFIED",
+		1: "SIGNAL_SIDE_LONG",
+		2: "SIGNAL_SIDE_SHORT",
+		3: "SIGNAL_SIDE_FLAT",
+	}
+	SignalSide_value = map[string]int32{
+		"SIGNAL_SIDE_UNSPECIFIED": 0,
+		"SIGNAL_SIDE_LONG":        1,
+		"SIGNAL_SIDE_SHORT":       2,
+		"SIGNAL_SIDE_FLAT":        3,
+	}
+)
+
+func (x SignalSide) Enum() *SignalSide {
+	p := new(SignalSide)
+	*p = x
+	return p
+}
+
+func (x SignalSide) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SignalSide) Descriptor() protoreflect.EnumDescriptor {
+	return file_bus_v1_signal_proto_enumTypes[1].Descriptor()
+}
+
+func (SignalSide) Type() protoreflect.EnumType {
+	return &file_bus_v1_signal_proto_enumTypes[1]
+}
+
+func (x SignalSide) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SignalSide.Descriptor instead.
+func (SignalSide) EnumDescriptor() ([]byte, []int) {
+	return file_bus_v1_signal_proto_rawDescGZIP(), []int{1}
+}
+
 // Signal is the canonical normalized signal published to the influencer_signals topic.
 type Signal struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -33,9 +145,9 @@ type Signal struct {
 	// Hyperliquid market identifier (e.g., "ETH-PERP").
 	Market string `protobuf:"bytes,4,opt,name=market,proto3" json:"market,omitempty"`
 	// Semantic action: OPEN, CLOSE, INCREASE, DECREASE, FLIP.
-	Action string `protobuf:"bytes,5,opt,name=action,proto3" json:"action,omitempty"`
+	Action SignalAction `protobuf:"varint,5,opt,name=action,proto3,enum=bus.v1.SignalAction" json:"action,omitempty"`
 	// Resulting position side after the event: LONG, SHORT, FLAT.
-	Side string `protobuf:"bytes,6,opt,name=side,proto3" json:"side,omitempty"`
+	Side SignalSide `protobuf:"varint,6,opt,name=side,proto3,enum=bus.v1.SignalSide" json:"side,omitempty"`
 	// Resulting position size after applying this event (base units).
 	Size float64 `protobuf:"fixed64,7,opt,name=size,proto3" json:"size,omitempty"`
 	// Signed change in position size from the previous state.
@@ -110,18 +222,18 @@ func (x *Signal) GetMarket() string {
 	return ""
 }
 
-func (x *Signal) GetAction() string {
+func (x *Signal) GetAction() SignalAction {
 	if x != nil {
 		return x.Action
 	}
-	return ""
+	return SignalAction_SIGNAL_ACTION_UNSPECIFIED
 }
 
-func (x *Signal) GetSide() string {
+func (x *Signal) GetSide() SignalSide {
 	if x != nil {
 		return x.Side
 	}
-	return ""
+	return SignalSide_SIGNAL_SIDE_UNSPECIFIED
 }
 
 func (x *Signal) GetSize() float64 {
@@ -170,14 +282,14 @@ var File_bus_v1_signal_proto protoreflect.FileDescriptor
 
 const file_bus_v1_signal_proto_rawDesc = "" +
 	"\n" +
-	"\x13bus/v1/signal.proto\x12\x06bus.v1\"\xb5\x03\n" +
+	"\x13bus/v1/signal.proto\x12\x06bus.v1\"\xdf\x03\n" +
 	"\x06Signal\x12\x1b\n" +
 	"\tsignal_id\x18\x01 \x01(\tR\bsignalId\x12#\n" +
 	"\rinfluencer_id\x18\x02 \x01(\tR\finfluencerId\x12\x1a\n" +
 	"\bexchange\x18\x03 \x01(\tR\bexchange\x12\x16\n" +
-	"\x06market\x18\x04 \x01(\tR\x06market\x12\x16\n" +
-	"\x06action\x18\x05 \x01(\tR\x06action\x12\x12\n" +
-	"\x04side\x18\x06 \x01(\tR\x04side\x12\x12\n" +
+	"\x06market\x18\x04 \x01(\tR\x06market\x12,\n" +
+	"\x06action\x18\x05 \x01(\x0e2\x14.bus.v1.SignalActionR\x06action\x12&\n" +
+	"\x04side\x18\x06 \x01(\x0e2\x12.bus.v1.SignalSideR\x04side\x12\x12\n" +
 	"\x04size\x18\a \x01(\x01R\x04size\x12\x1d\n" +
 	"\n" +
 	"delta_size\x18\b \x01(\x01R\tdeltaSize\x12\x14\n" +
@@ -188,7 +300,20 @@ const file_bus_v1_signal_proto_rawDesc = "" +
 	"\bmetadata\x18\f \x03(\v2\x1c.bus.v1.Signal.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01BEZCgithub.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1;busv1b\x06proto3"
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*\xae\x01\n" +
+	"\fSignalAction\x12\x1d\n" +
+	"\x19SIGNAL_ACTION_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12SIGNAL_ACTION_OPEN\x10\x01\x12\x17\n" +
+	"\x13SIGNAL_ACTION_CLOSE\x10\x02\x12\x1a\n" +
+	"\x16SIGNAL_ACTION_INCREASE\x10\x03\x12\x1a\n" +
+	"\x16SIGNAL_ACTION_DECREASE\x10\x04\x12\x16\n" +
+	"\x12SIGNAL_ACTION_FLIP\x10\x05*l\n" +
+	"\n" +
+	"SignalSide\x12\x1b\n" +
+	"\x17SIGNAL_SIDE_UNSPECIFIED\x10\x00\x12\x14\n" +
+	"\x10SIGNAL_SIDE_LONG\x10\x01\x12\x15\n" +
+	"\x11SIGNAL_SIDE_SHORT\x10\x02\x12\x14\n" +
+	"\x10SIGNAL_SIDE_FLAT\x10\x03BEZCgithub.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1;busv1b\x06proto3"
 
 var (
 	file_bus_v1_signal_proto_rawDescOnce sync.Once
@@ -202,18 +327,23 @@ func file_bus_v1_signal_proto_rawDescGZIP() []byte {
 	return file_bus_v1_signal_proto_rawDescData
 }
 
+var file_bus_v1_signal_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_bus_v1_signal_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_bus_v1_signal_proto_goTypes = []any{
-	(*Signal)(nil), // 0: bus.v1.Signal
-	nil,            // 1: bus.v1.Signal.MetadataEntry
+	(SignalAction)(0), // 0: bus.v1.SignalAction
+	(SignalSide)(0),   // 1: bus.v1.SignalSide
+	(*Signal)(nil),    // 2: bus.v1.Signal
+	nil,               // 3: bus.v1.Signal.MetadataEntry
 }
 var file_bus_v1_signal_proto_depIdxs = []int32{
-	1, // 0: bus.v1.Signal.metadata:type_name -> bus.v1.Signal.MetadataEntry
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: bus.v1.Signal.action:type_name -> bus.v1.SignalAction
+	1, // 1: bus.v1.Signal.side:type_name -> bus.v1.SignalSide
+	3, // 2: bus.v1.Signal.metadata:type_name -> bus.v1.Signal.MetadataEntry
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_bus_v1_signal_proto_init() }
@@ -226,13 +356,14 @@ func file_bus_v1_signal_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bus_v1_signal_proto_rawDesc), len(file_bus_v1_signal_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      2,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_bus_v1_signal_proto_goTypes,
 		DependencyIndexes: file_bus_v1_signal_proto_depIdxs,
+		EnumInfos:         file_bus_v1_signal_proto_enumTypes,
 		MessageInfos:      file_bus_v1_signal_proto_msgTypes,
 	}.Build()
 	File_bus_v1_signal_proto = out.File

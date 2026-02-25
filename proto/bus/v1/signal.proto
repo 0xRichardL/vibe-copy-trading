@@ -4,6 +4,24 @@ package bus.v1;
 
 option go_package = "github.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1;busv1";
 
+// SignalAction enumerates the semantic action represented by a signal.
+enum SignalAction {
+  SIGNAL_ACTION_UNSPECIFIED = 0;
+  SIGNAL_ACTION_OPEN = 1;
+  SIGNAL_ACTION_CLOSE = 2;
+  SIGNAL_ACTION_INCREASE = 3;
+  SIGNAL_ACTION_DECREASE = 4;
+  SIGNAL_ACTION_FLIP = 5;
+}
+
+// SignalSide captures the resulting position orientation after a signal is applied.
+enum SignalSide {
+  SIGNAL_SIDE_UNSPECIFIED = 0;
+  SIGNAL_SIDE_LONG = 1;
+  SIGNAL_SIDE_SHORT = 2;
+  SIGNAL_SIDE_FLAT = 3;
+}
+
 // Signal is the canonical normalized signal published to the influencer_signals topic.
 message Signal {
   // Globally unique, deterministic ID for the signal.
@@ -19,10 +37,10 @@ message Signal {
   string market = 4;
 
   // Semantic action: OPEN, CLOSE, INCREASE, DECREASE, FLIP.
-  string action = 5;
+  SignalAction action = 5;
 
   // Resulting position side after the event: LONG, SHORT, FLAT.
-  string side = 6;
+  SignalSide side = 6;
 
   // Resulting position size after applying this event (base units).
   double size = 7;

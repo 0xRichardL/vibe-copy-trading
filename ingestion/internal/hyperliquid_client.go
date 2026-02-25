@@ -114,6 +114,7 @@ func NormalizeEventToSignal(inf Influencer, raw RawHyperliquidEvent, receivedAt 
 	if parsed.Side == "" {
 		parsed.Side = "FLAT"
 	}
+	side := normalizeSignalSide(parsed.Side)
 
 	timestamp := parsed.TimestampMs
 	if timestamp == 0 {
@@ -140,7 +141,7 @@ func NormalizeEventToSignal(inf Influencer, raw RawHyperliquidEvent, receivedAt 
 		Exchange:      "hyperliquid",
 		Market:        parsed.Market,
 		Action:        action,
-		Side:          parsed.Side,
+		Side:          side,
 		Size:          parsed.PositionSize,
 		DeltaSize:     parsed.DeltaSize,
 		Price:         parsed.Price,
@@ -217,26 +218,39 @@ func parseHyperliquidUserEvent(raw RawHyperliquidEvent, receivedAt time.Time) (*
 	return evt, nil
 }
 
-func deriveSignalAction(evt *hyperliquidUserEvent) string {
+func deriveSignalAction(evt *hyperliquidUserEvent) busv1.SignalAction {
 	switch {
 	case evt == nil:
-		return "OPEN"
+		return busv1.SignalAction_SIGNAL_ACTION_OPEN
 	case evt.PrevSide != "" && evt.Side != "" && !strings.EqualFold(evt.PrevSide, evt.Side):
-		return "FLIP"
+		return busv1.SignalAction_SIGNAL_ACTION_FLIP
 	case evt.PositionSize == 0 && evt.DeltaSize < 0:
-		return "CLOSE"
+		return busv1.SignalAction_SIGNAL_ACTION_CLOSE
 	case evt.DeltaSize > 0:
 		if evt.PositionSize == evt.DeltaSize || evt.PrevSide == "" {
-			return "OPEN"
+			return busv1.SignalAction_SIGNAL_ACTION_OPEN
 		}
-		return "INCREASE"
+		return busv1.SignalAction_SIGNAL_ACTION_INCREASE
 	case evt.DeltaSize < 0:
 		if evt.PositionSize == 0 {
-			return "CLOSE"
+			return busv1.SignalAction_SIGNAL_ACTION_CLOSE
 		}
-		return "DECREASE"
+		return busv1.SignalAction_SIGNAL_ACTION_DECREASE
 	default:
-		return "OPEN"
+		return busv1.SignalAction_SIGNAL_ACTION_OPEN
+	}
+}
+
+func normalizeSignalSide(side string) busv1.SignalSide {
+	switch strings.ToUpper(strings.TrimSpace(side)) {
+	case "LONG":
+		return busv1.SignalSide_SIGNAL_SIDE_LONG
+	case "SHORT":
+		return busv1.SignalSide_SIGNAL_SIDE_SHORT
+	case "FLAT":
+		return busv1.SignalSide_SIGNAL_SIDE_FLAT
+	default:
+		return busv1.SignalSide_SIGNAL_SIDE_UNSPECIFIED
 	}
 }
 
