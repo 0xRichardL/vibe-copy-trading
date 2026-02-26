@@ -1,0 +1,25 @@
+{
+  "channel": "user",
+  "data": {
+    "fills": [
+      {
+        "coin": "kFLOKI",
+        "px": "0.030219",
+        "sz": "592.0",
+        "side": "A",
+        "time": 1772075422376,
+        "startPosition": "-258434.0",
+        "dir": "Open Short",
+        "closedPnl": "0.0",
+        "hash": "0x19bd413f4897e0011b36043604a4840204b50024e39afed3bd85ec92079bb9eb",
+        "oid": 330398239520,
+        "crossed": false,
+        "fee": "-0.000536",
+        "tid": 527852780435892,
+        "cloid": "0x665084ba2ce836dad9a0b0b58bbad0fc",
+        "feeToken": "USDC",
+        "twapId": null
+      }
+    ]
+  }
+}

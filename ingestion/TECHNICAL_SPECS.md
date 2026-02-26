@@ -72,8 +72,20 @@
 ### 4.1 Inbound
 
 - **Hyperliquid WebSocket API**
-  - Channel type: account/user-level events for configured influencer addresses.
-  - Subscriptions: per-influencer subscriptions for fills, orders, and/or position updates (exact channel names per Hyperliquid docs).
+  - Channel type (copy-trading path): account/user-level `userEvents` subscription that emits `WsUserEvent` payloads ("user events that are not order updates") for configured influencer addresses.
+  - Subscription shape (per influencer):
+    - Request payload (wrapped in a WebSocket message):
+      - Top-level envelope:
+        - `method`: `"subscribe"`.
+        - `subscription`: object describing the feed.
+      - `subscription` object for copy trading:
+        - `type`: `"userEvents"`.
+        - `user`: influencer Hyperliquid address.
+    - Semantics:
+      - `fills`: primary source of trade executions; used to derive `deltaSize`, `price`, and to infer when positions are opened/increased/decreased/closed.
+      - `positions`: position snapshots / updates; used to compute resulting `size` and `side` (`LONG`/`SHORT`/`FLAT`) for each market after an event.
+      - `orders`: optional stream for richer context (e.g., pending orders); currently only used for diagnostics and does not independently emit `Signal`s.
+  - Non-goals: public market data channels (order books, trades) are **not** used for copy trading; all copy decisions are driven by the influencer's authenticated `userEvents` stream.
   - Auth: API key / account auth model as required by Hyperliquid.
   - Rate/connection limits: respect Hyperliquid guidelines (max concurrent connections, message rate, subscription fan-out). Prefer multiplexing multiple influencers over shared connections where possible while still provisioning two logical listeners per influencer.
 
@@ -122,6 +134,31 @@ Minimal ingestion-time view of a `Signal` (exact formal schema lives in shared d
   - By `influencerAddress`, `market`, `timestamp` for efficient replay and debugging.
 
 > See ../TECHNICAL_SPECS.md §4 and shared proto/domain modules for the authoritative schemas.
+
+### 5.3 Hyperliquid Raw Fills (WsUserEvent / WsFill)
+
+- **Inbound feed:** Hyperliquid `userEvents` WebSocket subscription.
+- **Effective payload for copy trading:** `WsUserEvent` frames where `data.fills` is non-empty. Each element of `data.fills` is a `WsFill`-style object.
+- **Shape (simplified):**
+  - Top-level frame (what the client receives):
+    - `channel`: string (e.g., `"userEvents"`).
+    - `data`: object with one or more of: `fills`, `funding`, `liquidation`, `nonUserCancel`, etc.
+  - `data.fills`: array of fill objects; ingestion currently normalizes the **first** fill in each frame into a `Signal`.
+- **Fields used for normalization (per fill):**
+  - `coin`: market identifier used to derive `Signal.market`.
+  - `px`: execution price used for `Signal.price`.
+  - `sz`: executed size.
+  - `side`: direction token (`"B"`/`"S"`), combined with `startPosition`/`sz` to compute the new position.
+  - `startPosition`: position size immediately **before** the fill; used to derive `deltaSize`, resulting `size`, and resulting `side` (`LONG`/`SHORT`/`FLAT`).
+  - `time`: event timestamp (ms) preferred for `Signal.timestamp`.
+  - `hash` / `tid` / `oid`: identifiers used to construct a stable `sourceEventId`.
+  - `closedPnl`, `fee`, `feeToken`, `dir`, `crossed`: currently only stored as part of the raw payload for observability.
+- **Examples:** concrete sample payloads are maintained under:
+  - `ingestion/examples/hyperliquid/userFills/open-long.json`
+  - `ingestion/examples/hyperliquid/userFills/close-long.json`
+  - `ingestion/examples/hyperliquid/userFills/open-short.json`
+  - `ingestion/examples/hyperliquid/userFills/close-short.json`
+- **Raw storage:** the full WebSocket frame (including `channel` and `data`) is persisted as `rawPayload` for audit and replay, while normalized fields are projected into `Signal` as described in §5.1.
 
 ## 6. Configuration
 

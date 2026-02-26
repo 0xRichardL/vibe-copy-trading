@@ -1,0 +1,25 @@
+{
+  "channel": "user",
+  "data": {
+    "fills": [
+      {
+        "coin": "TAO",
+        "px": "184.02",
+        "sz": "0.109",
+        "side": "B",
+        "time": 1772075421363,
+        "startPosition": "221.095",
+        "dir": "Open Long",
+        "closedPnl": "0.0",
+        "hash": "0x402618d8b376e917419f043604a47902050a00be4e7a07e9e3eec42b727ac301",
+        "oid": 330398557963,
+        "crossed": false,
+        "fee": "-0.000601",
+        "tid": 479351911531910,
+        "cloid": "0x67805270891a87d3e235b3e302881a40",
+        "feeToken": "USDC",
+        "twapId": null
+      }
+    ]
+  }
+}

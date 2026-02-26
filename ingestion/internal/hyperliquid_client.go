@@ -8,17 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
+	"math"
 	"strings"
 	"time"
 
 	busv1 "github.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1"
 	"github.com/0xRichardL/vibe-copy-trading/libs/go/numbers"
-	"golang.org/x/net/websocket"
+	hl "github.com/sonirico/go-hyperliquid"
 )
-
-// RawHyperliquidEvent is a generic representation of an incoming Hyperliquid event.
-type RawHyperliquidEvent map[string]any
 
 // HyperliquidClient abstracts WebSocket interactions for redundant listeners.
 type HyperliquidClient struct {
@@ -44,94 +41,105 @@ func (c *HyperliquidClient) SubscribeAccountEvents(
 		return errors.New("SubscribeAccountEvents: handler is required")
 	}
 
-	ws, err := websocket.Dial(c.wsURL, "", "http://localhost/")
-	if err != nil {
-		return err
+	ws := hl.NewWebsocketClient(c.wsURL)
+	if err := ws.Connect(ctx); err != nil {
+		return fmt.Errorf("connect websocket: %w", err)
 	}
 	defer func() {
-		err := ws.Close()
-		if err != nil {
+		if err := ws.Close(); err != nil {
 			c.logger.Printf("error closing websocket for influencer %s: %v", inf.ID, err)
 		}
 	}()
 
-	deadline := time.Now().Add(5 * time.Second)
-	if err := ws.SetDeadline(deadline); err != nil {
-		c.logger.Printf("set deadline warning for %s: %v", inf.ID, err)
+	c.logger.Printf("subscribing influencer %s (%s) to Hyperliquid user fills", inf.ID, inf.Address)
+	sub, err := ws.OrderFills(
+		hl.OrderFillsSubscriptionParams{User: inf.Address},
+		func(fills hl.WsOrderFills, err error) {
+			if err != nil {
+				c.logger.Printf("order fills callback error for influencer %s: %v", inf.ID, err)
+				return
+			}
+			if len(fills.Fills) == 0 {
+				return
+			}
+
+			received := time.Now().UTC()
+			for _, f := range fills.Fills {
+				sig, err := NormalizeEventToSignal(inf, f, received)
+				if err != nil {
+					c.logger.Printf("normalize event error for influencer %s: %v", inf.ID, err)
+					continue
+				}
+				if sig == nil {
+					continue
+				}
+				if err := handler(ctx, sig); err != nil && !errors.Is(err, context.Canceled) {
+					c.logger.Printf("handler error for influencer %s: %v", inf.ID, err)
+				}
+			}
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("subscribe to order fills: %w", err)
 	}
+	defer sub.Close()
 
-	subMsg := defaultSubscribePayload(inf)
-	c.logger.Printf("subscribing influencer %s (%s)", inf.ID, inf.Address)
-	if err := websocket.JSON.Send(ws, subMsg); err != nil {
-		return fmt.Errorf("send subscribe payload: %w", err)
-	}
-	_ = ws.SetDeadline(time.Time{})
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		var msg RawHyperliquidEvent
-		if err := websocket.JSON.Receive(ws, &msg); err != nil {
-			return err
-		}
-
-		received := time.Now().UTC()
-		sig, err := NormalizeEventToSignal(inf, msg, received)
-		if err != nil {
-			c.logger.Printf("normalize event error for influencer %s: %v", inf.ID, err)
-			continue
-		}
-		if sig == nil {
-			continue
-		}
-		if err := handler(ctx, sig); err != nil && !errors.Is(err, context.Canceled) {
-			c.logger.Printf("handler error for influencer %s: %v", inf.ID, err)
-		}
-	}
+	<-ctx.Done()
+	return ctx.Err()
 }
 
-// NormalizeEventToSignal converts an event (with listener metadata) into a signal proto.
-func NormalizeEventToSignal(inf Influencer, raw RawHyperliquidEvent, receivedAt time.Time) (*busv1.Signal, error) {
-	parsed, err := parseHyperliquidUserEvent(raw, receivedAt)
-	if err != nil {
-		return nil, err
+// NormalizeEventToSignal converts a single Hyperliquid WsOrderFill into a Signal.
+func NormalizeEventToSignal(inf Influencer, fill hl.WsOrderFill, receivedAt time.Time) (*busv1.Signal, error) {
+	if fill.Coin == "" {
+		return nil, fmt.Errorf("missing market (coin) in fill for influencer %s", inf.ID)
 	}
 
-	if parsed.Market == "" {
-		return nil, fmt.Errorf("missing market in event for influencer %s", inf.ID)
-	}
-
-	sourceID := parsed.SourceEventID
-	if sourceID == "" {
-		sourceID = fmt.Sprintf("%s:%d", parsed.Kind, parsed.Sequence)
-	}
-	signalID := buildSignalID(inf.ID, parsed.Market, sourceID)
-	action := deriveSignalAction(parsed)
-	if parsed.Side == "" {
-		parsed.Side = "FLAT"
-	}
-	side := normalizeSignalSide(parsed.Side)
-
-	timestamp := parsed.TimestampMs
-	if timestamp == 0 {
+	market := strings.ToUpper(fill.Coin)
+	price, _ := numbers.ExtractFloat(fill.Px)
+	startPosition, _ := numbers.ExtractFloat(fill.StartPosition)
+	size, _ := numbers.ExtractFloat(fill.Sz)
+	timestamp := fill.Time
+	if timestamp == 0 && !receivedAt.IsZero() {
 		timestamp = receivedAt.UnixMilli()
 	}
 
+	sideToken := strings.ToUpper(strings.TrimSpace(fill.Side))
+	isBuy := sideToken == "B" || sideToken == "BUY"
+	var newPosition float64
+	if isBuy {
+		newPosition = startPosition + size
+	} else {
+		newPosition = startPosition - size
+	}
+
+	prevSideStr := positionSideFromSize(startPosition)
+	sideStr := positionSideFromSize(newPosition)
+	positionSize := math.Abs(newPosition)
+	deltaSize := newPosition - startPosition
+	action := deriveSignalAction(prevSideStr, sideStr, positionSize, deltaSize)
+	sideEnum := normalizeSignalSide(sideStr)
+
+	sourceID := ""
+	if fill.Hash != "" {
+		sourceID = fill.Hash
+	} else if fill.Tid != 0 {
+		sourceID = fmt.Sprintf("tid:%d", fill.Tid)
+	} else if fill.Oid != 0 {
+		sourceID = fmt.Sprintf("oid:%d", fill.Oid)
+	}
+	if sourceID == "" {
+		sourceID = fmt.Sprintf("fill:%s:%d", market, timestamp)
+	}
+	signalID := buildSignalID(inf.ID, market, sourceID)
+
 	metadata := map[string]string{
-		"event_type":      parsed.Kind,
+		"event_type":      "fill",
 		"source_event_id": sourceID,
 	}
 	if inf.Address != "" {
 		metadata["influencer_address"] = inf.Address
 	}
-	if parsed.Sequence != 0 {
-		metadata["event_sequence"] = strconv.FormatInt(parsed.Sequence, 10)
-	}
-	if rawJSON, err := json.Marshal(raw); err == nil {
+	if rawJSON, err := json.Marshal(fill); err == nil {
 		metadata["raw"] = string(rawJSON)
 	}
 
@@ -139,105 +147,47 @@ func NormalizeEventToSignal(inf Influencer, raw RawHyperliquidEvent, receivedAt 
 		SignalId:      signalID,
 		InfluencerId:  inf.ID,
 		Exchange:      "hyperliquid",
-		Market:        parsed.Market,
+		Market:        market,
 		Action:        action,
-		Side:          side,
-		Size:          parsed.PositionSize,
-		DeltaSize:     parsed.DeltaSize,
-		Price:         parsed.Price,
+		Side:          sideEnum,
+		Size:          positionSize,
+		DeltaSize:     deltaSize,
+		Price:         price,
 		TimestampMs:   timestamp,
 		SourceEventId: sourceID,
 		Metadata:      metadata,
 	}, nil
 }
 
-func defaultSubscribePayload(inf Influencer) map[string]any {
-	streams := []string{"fills", "orders", "positions"}
-	payload := map[string]any{
-		"type":    "subscribe",
-		"channel": "userEvents",
-		"account": inf.Address,
-		"streams": streams,
-	}
-	if len(inf.Markets) > 0 {
-		payload["markets"] = inf.Markets
-	}
-	return payload
-}
-
-type hyperliquidUserEvent struct {
-	Kind          string
-	Market        string
-	Sequence      int64
-	SourceEventID string
-	Side          string
-	PrevSide      string
-	PositionSize  float64
-	DeltaSize     float64
-	Price         float64
-	TimestampMs   int64
-	Raw           RawHyperliquidEvent
-}
-
-func parseHyperliquidUserEvent(raw RawHyperliquidEvent, receivedAt time.Time) (*hyperliquidUserEvent, error) {
-	if raw == nil {
-		return nil, errors.New("empty raw event")
-	}
-
-	evt := &hyperliquidUserEvent{Raw: raw}
-	evt.Kind = strings.ToLower(firstString(raw, "type", "eventType", "kind"))
-	evt.Market = strings.ToUpper(firstString(raw, "market", "symbol", "pair"))
-	evt.Sequence = firstInt(raw, "sequence", "seq", "nonce")
-	evt.SourceEventID = firstString(raw, "sourceEventId", "eventId", "txHash", "txid", "id")
-	evt.Side = strings.ToUpper(firstString(raw, "side", "positionSide", "direction"))
-	evt.PrevSide = strings.ToUpper(firstString(raw, "prevSide", "previousSide", "priorSide"))
-	evt.Price = firstFloat(raw, "price", "fillPrice", "avgPrice")
-	evt.DeltaSize = firstFloat(raw, "deltaSize", "sizeDelta", "delta", "fillSize", "quantity", "size")
-	evt.PositionSize = firstFloat(raw, "positionSize", "sizeAfter", "currentSize", "positionQty")
-	if evt.PositionSize == 0 {
-		if posMap, ok := nestedMap(raw, "position"); ok {
-			if v, err := numbers.ExtractFloat(posMap["size"]); err == nil {
-				evt.PositionSize = v
-			}
-			posRaw := RawHyperliquidEvent(posMap)
-			if side := firstString(posRaw, "side", "direction"); side != "" && evt.Side == "" {
-				evt.Side = strings.ToUpper(side)
-			}
-		}
-	}
-	if evt.PositionSize == 0 && evt.DeltaSize != 0 {
-		evt.PositionSize = evt.DeltaSize
-	}
-	if evt.Kind == "" {
-		evt.Kind = "event"
-	}
-	if evt.SourceEventID == "" && evt.Sequence != 0 {
-		evt.SourceEventID = fmt.Sprintf("%s:%d", evt.Kind, evt.Sequence)
-	}
-	evt.TimestampMs = firstTimestampMillis(raw, receivedAt)
-	return evt, nil
-}
-
-func deriveSignalAction(evt *hyperliquidUserEvent) busv1.SignalAction {
+func deriveSignalAction(prevSide, side string, positionSize, deltaSize float64) busv1.SignalAction {
 	switch {
-	case evt == nil:
-		return busv1.SignalAction_SIGNAL_ACTION_OPEN
-	case evt.PrevSide != "" && evt.Side != "" && !strings.EqualFold(evt.PrevSide, evt.Side):
+	case prevSide != "" && side != "" && !strings.EqualFold(prevSide, side):
 		return busv1.SignalAction_SIGNAL_ACTION_FLIP
-	case evt.PositionSize == 0 && evt.DeltaSize < 0:
+	case positionSize == 0 && deltaSize < 0:
 		return busv1.SignalAction_SIGNAL_ACTION_CLOSE
-	case evt.DeltaSize > 0:
-		if evt.PositionSize == evt.DeltaSize || evt.PrevSide == "" {
+	case deltaSize > 0:
+		if positionSize == deltaSize || prevSide == "" {
 			return busv1.SignalAction_SIGNAL_ACTION_OPEN
 		}
 		return busv1.SignalAction_SIGNAL_ACTION_INCREASE
-	case evt.DeltaSize < 0:
-		if evt.PositionSize == 0 {
+	case deltaSize < 0:
+		if positionSize == 0 {
 			return busv1.SignalAction_SIGNAL_ACTION_CLOSE
 		}
 		return busv1.SignalAction_SIGNAL_ACTION_DECREASE
 	default:
 		return busv1.SignalAction_SIGNAL_ACTION_OPEN
+	}
+}
+
+func positionSideFromSize(size float64) string {
+	switch {
+	case size > 0:
+		return "LONG"
+	case size < 0:
+		return "SHORT"
+	default:
+		return "FLAT"
 	}
 }
 
@@ -258,64 +208,4 @@ func buildSignalID(influencerID, market, sourceID string) string {
 	base := fmt.Sprintf("%s|%s|%s", influencerID, market, sourceID)
 	hash := sha256.Sum256([]byte(base))
 	return hex.EncodeToString(hash[:])
-}
-
-func firstString(raw RawHyperliquidEvent, keys ...string) string {
-	for _, key := range keys {
-		if val, ok := raw[key]; ok {
-			switch v := val.(type) {
-			case string:
-				return strings.TrimSpace(v)
-			case json.Number:
-				return v.String()
-			case fmt.Stringer:
-				return strings.TrimSpace(v.String())
-			}
-		}
-	}
-	return ""
-}
-
-func firstFloat(raw RawHyperliquidEvent, keys ...string) float64 {
-	for _, key := range keys {
-		if val, ok := raw[key]; ok {
-			if f, err := numbers.ExtractFloat(val); err == nil {
-				return f
-			}
-		}
-	}
-	return 0
-}
-
-func firstInt(raw RawHyperliquidEvent, keys ...string) int64 {
-	for _, key := range keys {
-		if val, ok := raw[key]; ok {
-			if i, err := numbers.ExtractInt(val); err == nil {
-				return i
-			}
-		}
-	}
-	return 0
-}
-
-func firstTimestampMillis(raw RawHyperliquidEvent, fallback time.Time) int64 {
-	if ms := firstInt(raw, "timestamp", "ts", "time", "eventTime"); ms != 0 {
-		if ms > 1_000_000_000_000 {
-			return ms
-		}
-		return ms * 1000
-	}
-	if !fallback.IsZero() {
-		return fallback.UnixMilli()
-	}
-	return 0
-}
-
-func nestedMap(raw RawHyperliquidEvent, key string) (map[string]any, bool) {
-	if val, ok := raw[key]; ok {
-		if m, ok := val.(map[string]any); ok {
-			return m, true
-		}
-	}
-	return nil, false
 }

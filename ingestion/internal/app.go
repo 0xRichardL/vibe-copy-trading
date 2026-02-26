@@ -121,21 +121,17 @@ func (a *App) cleanup() {
 }
 
 // buildEventFingerprint remains available for potential downstream dedupe usage.
-func buildEventFingerprint(inf Influencer, ev RawHyperliquidEvent) string {
-	if ev == nil {
+// It currently fingerprints by the normalized SignalId, which is already a
+// stable hash of influencer, market, and source event identifier.
+func buildEventFingerprint(sig *busv1.Signal) string {
+	if sig == nil {
 		return ""
 	}
-
-	parsed, err := parseHyperliquidUserEvent(ev, time.Time{})
-	if err != nil {
-		return ""
+	if sig.SignalId != "" {
+		return sig.SignalId
 	}
-
-	if parsed.SourceEventID != "" {
-		return fmt.Sprintf("%s|%s|%s", inf.ID, parsed.Market, parsed.SourceEventID)
-	}
-	if parsed.Sequence != 0 {
-		return fmt.Sprintf("%s|%s|%d", inf.ID, parsed.Market, parsed.Sequence)
+	if sig.SourceEventId != "" {
+		return fmt.Sprintf("%s|%s|%s", sig.InfluencerId, sig.Market, sig.SourceEventId)
 	}
 	return ""
 }

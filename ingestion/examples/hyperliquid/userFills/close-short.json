@@ -1,0 +1,25 @@
+{
+  "channel": "user",
+  "data": {
+    "fills": [
+      {
+        "coin": "LIT",
+        "px": "1.4652",
+        "sz": "170.0",
+        "side": "B",
+        "time": 1772075373539,
+        "startPosition": "-28564.0",
+        "dir": "Close Short",
+        "closedPnl": "1.29897",
+        "hash": "0x3e5219768c8569883fcb043604a2790205c3005c2788885ae21ac4c94b894372",
+        "oid": 330398048660,
+        "crossed": false,
+        "fee": "-0.007472",
+        "tid": 666425891593650,
+        "cloid": "0x8260ecb0723b18f045cbbb47a7827978",
+        "feeToken": "USDC",
+        "twapId": null
+      }
+    ]
+  }
+}
