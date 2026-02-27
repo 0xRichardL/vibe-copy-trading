@@ -4,9 +4,11 @@ go 1.26
 
 require (
 	github.com/0xRichardL/vibe-copy-trading/libs/go v0.0.0-20260225162618-8e3b2a7b7d65
+	github.com/gin-gonic/gin v1.11.0
 	github.com/redis/go-redis/v9 v9.5.1
 	github.com/segmentio/kafka-go v0.4.47
 	github.com/sonirico/go-hyperliquid v0.33.1
+	golang.org/x/sync v0.17.0
 	google.golang.org/protobuf v1.36.9
 )
 
@@ -30,7 +32,6 @@ require (
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
-	github.com/gin-gonic/gin v1.11.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
@@ -72,7 +73,6 @@ require (
 	golang.org/x/crypto v0.42.0 // indirect
 	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 	golang.org/x/tools v0.36.0 // indirect
