@@ -27,6 +27,21 @@
 
 (Detail internal modules, package layout, and dependency graph here.)
 
+### 3.1 Project Layout (Go Packages)
+
+The matcher service is organized as a small Go module with a single binary and internal packages, mirroring the ingestion service layout:
+
+- `/matcher/main.go`: service entry point; initializes configuration, logging/observability, and starts the application.
+- `/matcher/internal/app.go`: application wiring and lifecycle management; constructs Kafka consumers/producers, Redis clients, and core services, then runs the main loop.
+- `/matcher/internal/config/...`: configuration loading from environment / shared config (Redis, Kafka topics, consumer group, keys).
+- `/matcher/internal/services/...`: business-logic services, including:
+  - signal matching service (subscription resolution, filters, sizing, ExecutionRequest construction),
+  - subscription lookup service (Redis-backed reads and caching),
+  - any auxiliary services (metrics hooks, health checks).
+- `/matcher/internal/domain/...`: domain models and interfaces shared within matcher (e.g., Subscription and related types).
+- `/matcher/internal/kafka/...`: Kafka adapters for consuming `influencer_signals` and publishing `execution_requests`.
+- `/matcher/internal/store/...`: Redis-backed repositories for subscriptions and related matcher state.
+
 ## 4. Interfaces
 
 ### 4.1 Inbound
