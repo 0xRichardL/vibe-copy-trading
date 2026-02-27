@@ -40,7 +40,7 @@ func NewApp(cfg config.Config, logger *log.Logger) *App {
 	infStore := store.NewInfluencerStore(redisClient, cfg.InfluencerSetKey)
 	publisher := kafka.NewSignalPublisher(cfg)
 	client := services.NewHyperliquidService(cfg, logger)
-	signal := services.NewStreamService(infStore, client, publisher)
+	signal := services.NewSignalService(infStore, client, publisher)
 
 	return &App{
 		cfg:       cfg,

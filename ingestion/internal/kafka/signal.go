@@ -18,10 +18,11 @@ type SignalPublisher struct {
 
 func NewSignalPublisher(cfg config.Config) *SignalPublisher {
 	writer := &kafka.Writer{
-		Addr:         kafka.TCP(cfg.KafkaBrokers...),
-		Topic:        cfg.KafkaTopic,
-		RequiredAcks: kafka.RequireAll,
-		Balancer:     &kafka.Hash{},
+		Addr:                   kafka.TCP(cfg.KafkaBrokers...),
+		Topic:                  cfg.KafkaTopic,
+		RequiredAcks:           kafka.RequireAll,
+		Balancer:               &kafka.Hash{},
+		AllowAutoTopicCreation: true,
 	}
 	return &SignalPublisher{writer: writer, Topic: cfg.KafkaTopic}
 }

@@ -27,7 +27,7 @@ type SignalService struct {
 	pollInterval time.Duration
 }
 
-func NewStreamService(store *store.InfluencerStore, hyperliquid *HyperliquidService, publisher *kafka.SignalPublisher) *SignalService {
+func NewSignalService(store *store.InfluencerStore, hyperliquid *HyperliquidService, publisher *kafka.SignalPublisher) *SignalService {
 	return &SignalService{
 		store:        store,
 		hyperliquid:  hyperliquid,
@@ -45,7 +45,7 @@ func (s *SignalService) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return s.manager.ShutdownAll()
 		default:
 		}
 
@@ -54,7 +54,7 @@ func (s *SignalService) Start(ctx context.Context) error {
 			if err == store.ErrNoInfluencers {
 				select {
 				case <-ctx.Done():
-					return nil
+					return s.manager.ShutdownAll()
 				case <-time.After(s.pollInterval):
 				}
 				continue
