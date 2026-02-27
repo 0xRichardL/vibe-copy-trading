@@ -23,7 +23,7 @@ type Config struct {
 	HTTPAddr string
 }
 
-// envOrDefault returns the value of an env var or a default.
+// envOrDefault returns the value of an environment variable or a default.
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

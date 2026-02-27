@@ -38,7 +38,7 @@ func (s *InfluencerStore) Add(ctx context.Context, inf domain.Influencer) error 
 	return nil
 }
 
-// List loads all influencers from the Redis set associated with the provided source.
+// List loads all influencers from the Redis set referenced by the configured key.
 func (s *InfluencerStore) List(ctx context.Context) ([]domain.Influencer, error) {
 	if s.key == "" {
 		return nil, fmt.Errorf("influencer set key is not configured")

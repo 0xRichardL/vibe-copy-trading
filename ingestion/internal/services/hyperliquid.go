@@ -19,7 +19,7 @@ import (
 	hl "github.com/sonirico/go-hyperliquid"
 )
 
-// HyperliquidService abstracts WebSocket interactions for redundant listeners.
+// HyperliquidService abstracts Hyperliquid WebSocket interactions across redundant listeners.
 type HyperliquidService struct {
 	wsURL  string
 	logger *log.Logger
