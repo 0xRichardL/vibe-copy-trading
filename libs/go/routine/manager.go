@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Handler processes work bound to an id specific context.
@@ -48,6 +50,14 @@ func NewManager(ctx context.Context) *Manager {
 	}
 }
 
+// TaskCount returns the number of currently running routines.
+func (m *Manager) TaskCount() int {
+	m.mu.RLock()
+	count := len(m.tasks)
+	m.mu.RUnlock()
+	return count
+}
+
 // Run starts a task with the bare id/handler pair.
 // Prefer RunTask when lifecycle hooks are needed.
 func (m *Manager) Run(id string, handler Handler) error {
@@ -86,6 +96,15 @@ func (m *Manager) RunTask(task *Task) error {
 	return nil
 }
 
+func (m *Manager) ensureState() {
+	if m.baseCtx == nil {
+		m.baseCtx = context.Background()
+	}
+	if m.tasks == nil {
+		m.tasks = make(map[string]*Task)
+	}
+}
+
 func (m *Manager) Shutdown(id string) error {
 	if id == "" {
 		return ErrEmptyID
@@ -101,6 +120,30 @@ func (m *Manager) Shutdown(id string) error {
 	task.cancel()
 	<-task.done
 	return nil
+}
+
+// ShutdownAll gracefully stops every running routine and waits for them to finish.
+// The first shutdown error encountered (if any) is returned.
+func (m *Manager) ShutdownAll() error {
+	m.mu.RLock()
+	ids := make([]string, 0, len(m.tasks))
+	for id := range m.tasks {
+		ids = append(ids, id)
+	}
+	m.mu.RUnlock()
+
+	var g errgroup.Group
+
+	for _, id := range ids {
+		g.Go(func() error {
+			if err := m.Shutdown(id); err != nil && !errors.Is(err, ErrRoutineNotFound) {
+				return err
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
 }
 
 func (m *Manager) run(task *Task, ctx context.Context) {
@@ -125,13 +168,4 @@ func (m *Manager) cleanup(id string, task *Task) {
 		delete(m.tasks, id)
 	}
 	m.mu.Unlock()
-}
-
-func (m *Manager) ensureState() {
-	if m.baseCtx == nil {
-		m.baseCtx = context.Background()
-	}
-	if m.tasks == nil {
-		m.tasks = make(map[string]*Task)
-	}
 }

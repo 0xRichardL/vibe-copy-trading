@@ -1,9 +1,10 @@
-package internal
+package kafka
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/config"
 	busv1 "github.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/protobuf/proto"
@@ -15,7 +16,7 @@ type SignalPublisher struct {
 	Topic  string
 }
 
-func NewSignalPublisher(cfg Config) *SignalPublisher {
+func NewSignalPublisher(cfg config.Config) *SignalPublisher {
 	writer := &kafka.Writer{
 		Addr:         kafka.TCP(cfg.KafkaBrokers...),
 		Topic:        cfg.KafkaTopic,

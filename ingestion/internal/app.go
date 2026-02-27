@@ -5,133 +5,121 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
-	busv1 "github.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1"
-	"github.com/0xRichardL/vibe-copy-trading/libs/go/routine"
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/config"
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/kafka"
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/rest"
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/services"
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/store"
+	redis "github.com/redis/go-redis/v9"
+	"golang.org/x/sync/errgroup"
 )
 
-// App wires together configuration, Redis, Hyperliquid client, and Kafka
-// publisher to implement the ingestion flow described in TECHNICAL_SPECS.md.
+// App centralizes dependency wiring for the ingestion service.
 type App struct {
-	cfg    Config
+	cfg    config.Config
 	logger *log.Logger
 
-	store     *InfluencerStore
-	client    *HyperliquidClient
-	publisher *SignalPublisher
+	redis     *redis.Client
+	store     *store.InfluencerStore
+	publisher *kafka.SignalPublisher
+	signal    *services.SignalService
+
+	httpServer *http.Server
 }
 
-// SignalHandler processes normalized signals prior to downstream distribution.
-type SignalHandler func(context.Context, *busv1.Signal) error
-
-func NewApp(cfg Config, logger *log.Logger) *App {
-	store := NewInfluencerStore(cfg)
-	client := NewHyperliquidClient(cfg, logger)
-	publisher := NewSignalPublisher(cfg)
+// NewApp builds an App with all required dependencies.
+func NewApp(cfg config.Config, logger *log.Logger) *App {
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+	infStore := store.NewInfluencerStore(redisClient, cfg.InfluencerSetKey)
+	publisher := kafka.NewSignalPublisher(cfg)
+	client := services.NewHyperliquidService(cfg, logger)
+	signal := services.NewStreamService(infStore, client, publisher)
 
 	return &App{
 		cfg:       cfg,
 		logger:    logger,
-		store:     store,
-		client:    client,
+		redis:     redisClient,
+		store:     infStore,
 		publisher: publisher,
+		signal:    signal,
 	}
 }
 
-// Run starts the ingestion loops for all configured influencers.
+// Run starts background services and blocks until ctx cancellation or fatal error.
 func (a *App) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	defer a.cleanup()
 
-	influencers, err := a.store.ListInfluencers(ctx)
-	if err != nil {
+	g, gctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		if err := a.signal.Start(gctx); err != nil {
+			return fmt.Errorf("start stream service: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		return a.runHTTPServer(gctx)
+	})
+
+	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
-
-	if len(influencers) == 0 {
-		a.logger.Println("no influencers configured; exiting")
-		return nil
-	}
-
-	manager := routine.NewManager(ctx)
-
-	for _, influencer := range influencers {
-		inf := influencer
-		task := &routine.Task{
-			ID: inf.ID,
-			Handler: func(taskCtx context.Context) error {
-				return a.streamInfluencerEvents(taskCtx, inf)
-			},
-			OnError: func(id string, err error) {
-				a.logger.Printf("ingestion loop for influencer %s exited: %v", id, err)
-			},
-		}
-		if err := manager.RunTask(task); err != nil {
-			return fmt.Errorf("start task for %s: %w", inf.ID, err)
-		}
-	}
-
-	<-ctx.Done()
-
-	for _, inf := range influencers {
-		if err := manager.Shutdown(inf.ID); err != nil && !errors.Is(err, routine.ErrRoutineNotFound) {
-			a.logger.Printf("graceful shutdown warning for %s: %v", inf.ID, err)
-		}
-	}
-
 	return ctx.Err()
 }
 
-func (a *App) streamInfluencerEvents(ctx context.Context, inf Influencer) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+func (a *App) runHTTPServer(ctx context.Context) error {
+	r, srv := rest.NewServer(a.cfg)
+	a.httpServer = srv
+	infController := rest.NewInfluencerController(a.store)
+	infController.RegisterInfluencerRoutes(r.Group(""))
 
-		if err := a.client.SubscribeAccountEvents(ctx, inf, a.handleSignal); err != nil {
-			a.logger.Printf("SubscribeAccountEvents error for %s: %v; retrying after backoff", inf.ID, err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(5 * time.Second):
-			}
-		}
-	}
-}
+	serverErr := make(chan error, 1)
+	go func() {
+		fmt.Printf("HTTP server started at: %s\n", srv.Addr)
+		serverErr <- srv.ListenAndServe()
+	}()
 
-func (a *App) handleSignal(ctx context.Context, sig *busv1.Signal) error {
-	if sig == nil {
+	select {
+	// App context shutdown:
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("http server shutdown: %w", err)
+		}
+		err := <-serverErr
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return ctx.Err()
+	// HTTP server error:
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
 		return nil
 	}
-
-	ctxPub, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return a.publisher.Publish(ctxPub, sig)
 }
 
 func (a *App) cleanup() {
-	if err := a.store.Close(); err != nil {
-		a.logger.Printf("error closing Redis client: %v", err)
+	if a.publisher != nil {
+		if err := a.publisher.Close(); err != nil {
+			a.logger.Printf("error closing Kafka publisher: %v", err)
+		}
 	}
-	if err := a.publisher.Close(); err != nil {
-		a.logger.Printf("error closing Kafka publisher: %v", err)
+	if a.redis != nil {
+		if err := a.redis.Close(); err != nil {
+			a.logger.Printf("error closing Redis client: %v", err)
+		}
 	}
-}
-
-// buildEventFingerprint remains available for potential downstream dedupe usage.
-// It currently fingerprints by the normalized SignalId, which is already a
-// stable hash of influencer, market, and source event identifier.
-func buildEventFingerprint(sig *busv1.Signal) string {
-	if sig == nil {
-		return ""
-	}
-	if sig.SignalId != "" {
-		return sig.SignalId
-	}
-	if sig.SourceEventId != "" {
-		return fmt.Sprintf("%s|%s|%s", sig.InfluencerId, sig.Market, sig.SourceEventId)
-	}
-	return ""
 }

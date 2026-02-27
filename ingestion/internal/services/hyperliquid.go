@@ -1,4 +1,4 @@
-package internal
+package services
 
 import (
 	"context"
@@ -12,51 +12,56 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/config"
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/domain"
 	busv1 "github.com/0xRichardL/vibe-copy-trading/libs/go/domain/bus/v1"
 	"github.com/0xRichardL/vibe-copy-trading/libs/go/numbers"
 	hl "github.com/sonirico/go-hyperliquid"
 )
 
-// HyperliquidClient abstracts WebSocket interactions for redundant listeners.
-type HyperliquidClient struct {
+// HyperliquidService abstracts WebSocket interactions for redundant listeners.
+type HyperliquidService struct {
 	wsURL  string
 	logger *log.Logger
 }
 
-func NewHyperliquidClient(cfg Config, logger *log.Logger) *HyperliquidClient {
-	return &HyperliquidClient{
+func NewHyperliquidService(cfg config.Config, logger *log.Logger) *HyperliquidService {
+	return &HyperliquidService{
 		wsURL:  cfg.HyperWSURL,
 		logger: logger,
 	}
 }
 
+// SignalHandler processes normalized signals prior to downstream distribution.
+type SignalHandler func(context.Context, *busv1.Signal) error
+
 // SubscribeAccountEvents connects to the Hyperliquid WebSocket and streams
 // account-level events for a single influencer.
-func (c *HyperliquidClient) SubscribeAccountEvents(
+func (s *HyperliquidService) SubscribeAccountEvents(
 	ctx context.Context,
-	inf Influencer,
+	inf *domain.Influencer,
 	handler SignalHandler,
 ) error {
 	if handler == nil {
 		return errors.New("SubscribeAccountEvents: handler is required")
 	}
 
-	ws := hl.NewWebsocketClient(c.wsURL)
+	ws := hl.NewWebsocketClient(s.wsURL)
 	if err := ws.Connect(ctx); err != nil {
 		return fmt.Errorf("connect websocket: %w", err)
 	}
 	defer func() {
 		if err := ws.Close(); err != nil {
-			c.logger.Printf("error closing websocket for influencer %s: %v", inf.ID, err)
+			s.logger.Printf("error closing websocket for influencer %s: %v", inf.Address, err)
 		}
 	}()
 
-	c.logger.Printf("subscribing influencer %s (%s) to Hyperliquid user fills", inf.ID, inf.Address)
+	s.logger.Printf("subscribing influencer %s to Hyperliquid user fills", inf.Address)
 	sub, err := ws.OrderFills(
 		hl.OrderFillsSubscriptionParams{User: inf.Address},
 		func(fills hl.WsOrderFills, err error) {
 			if err != nil {
-				c.logger.Printf("order fills callback error for influencer %s: %v", inf.ID, err)
+				s.logger.Printf("order fills callback error for influencer %s: %v", inf.Address, err)
 				return
 			}
 			if len(fills.Fills) == 0 {
@@ -67,14 +72,14 @@ func (c *HyperliquidClient) SubscribeAccountEvents(
 			for _, f := range fills.Fills {
 				sig, err := NormalizeEventToSignal(inf, f, received)
 				if err != nil {
-					c.logger.Printf("normalize event error for influencer %s: %v", inf.ID, err)
+					s.logger.Printf("normalize event error for influencer %s: %v", inf.Address, err)
 					continue
 				}
 				if sig == nil {
 					continue
 				}
 				if err := handler(ctx, sig); err != nil && !errors.Is(err, context.Canceled) {
-					c.logger.Printf("handler error for influencer %s: %v", inf.ID, err)
+					s.logger.Printf("handler error for influencer %s: %v", inf.Address, err)
 				}
 			}
 		},
@@ -89,9 +94,9 @@ func (c *HyperliquidClient) SubscribeAccountEvents(
 }
 
 // NormalizeEventToSignal converts a single Hyperliquid WsOrderFill into a Signal.
-func NormalizeEventToSignal(inf Influencer, fill hl.WsOrderFill, receivedAt time.Time) (*busv1.Signal, error) {
+func NormalizeEventToSignal(inf *domain.Influencer, fill hl.WsOrderFill, receivedAt time.Time) (*busv1.Signal, error) {
 	if fill.Coin == "" {
-		return nil, fmt.Errorf("missing market (coin) in fill for influencer %s", inf.ID)
+		return nil, fmt.Errorf("missing market (coin) in fill for influencer %s", inf.Address)
 	}
 
 	market := strings.ToUpper(fill.Coin)
@@ -130,7 +135,7 @@ func NormalizeEventToSignal(inf Influencer, fill hl.WsOrderFill, receivedAt time
 	if sourceID == "" {
 		sourceID = fmt.Sprintf("fill:%s:%d", market, timestamp)
 	}
-	signalID := buildSignalID(inf.ID, market, sourceID)
+	signalID := buildSignalID(inf.Address, market, sourceID)
 
 	metadata := map[string]string{
 		"event_type":      "fill",
@@ -145,7 +150,7 @@ func NormalizeEventToSignal(inf Influencer, fill hl.WsOrderFill, receivedAt time
 
 	return &busv1.Signal{
 		SignalId:      signalID,
-		InfluencerId:  inf.ID,
+		InfluencerId:  inf.Address,
 		Exchange:      "hyperliquid",
 		Market:        market,
 		Action:        action,

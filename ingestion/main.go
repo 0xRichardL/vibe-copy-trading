@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	service "github.com/0xRichardL/vibe-copy-trading/ingestion/internal"
+	"github.com/0xRichardL/vibe-copy-trading/ingestion/internal/config"
 )
 
 func main() {
@@ -16,7 +17,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	cfg, err := service.LoadConfig()
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		logger.Fatalf("failed to load config: %v", err)
 	}

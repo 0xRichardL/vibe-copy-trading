@@ -35,8 +35,10 @@
 
 1. **Startup & configuration**
 
-- Load list of influencer accounts and per-influencer settings (markets of interest, throttling, etc.) from Redis via the shared config/influencer library.
-- For each influencer, initialize a logical "connection context" (state: last processed seq/ID per market, backoff state, metrics handles).
+- On startup, the service initializes a background **acquirer loop** that maintains **at most 10** concurrently streamed influencer addresses.
+- The acquirer continuously pulls influencer addresses from Redis via the influencer store, respecting this global maximum.
+- For each acquired influencer address, the app starts a dedicated routine to stream that influencer's events from Hyperliquid.
+- When a given influencer stream terminates (due to error or graceful shutdown), the app **puts that influencer address back into Redis** so another ingestion instance (or a restarted one) can pick it up again.
 
 2. **WebSocket subscription (primary path)**
    - Establish and maintain a Hyperliquid WebSocket connection (or connection pool) using the Hyperliquid client library.
@@ -100,6 +102,16 @@
   - Keyed by influencer, market, event type, and event ID/sequence for audit and replay.
 
 > Reference proto/contracts definitions for `Signal` and raw event envelopes once defined at the system level.
+
+### 4.3 Influencer Store API
+
+- **Purpose:** Manage the set of influencer accounts that ingestion should listen to.
+- **Admin operation:**
+  - An admin (via CLI, admin service, or the ingestion HTTP API) can **add influencer addresses into Redis**.
+  - Each entry at minimum contains:
+    - `address`: Hyperliquid user address.
+    - Optional metadata (internal influencer ID, label, priority, markets of interest).
+  - Ingestion instances run a background acquirer loop that continuously pulls pending influencer addresses from this Redis-backed store (see §3.1.1) and starts streaming their events, up to the global maximum of 10 concurrent influencer streams per instance.
 
 ## 5. Data Contracts
 

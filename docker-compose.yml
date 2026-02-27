@@ -43,6 +43,8 @@ services:
       dockerfile: Dockerfile.goapp
       args:
         SERVICE: ingestion
+    ports:
+      - "8080:8080"
     depends_on:
       redis:
         condition: service_healthy

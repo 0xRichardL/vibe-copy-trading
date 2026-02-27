@@ -1,4 +1,4 @@
-package internal
+package config
 
 import (
 	"fmt"
@@ -19,6 +19,8 @@ type Config struct {
 	HyperWSURL string
 
 	InfluencerSetKey string
+
+	HTTPAddr string
 }
 
 // envOrDefault returns the value of an env var or a default.
@@ -70,6 +72,8 @@ func LoadConfig() (Config, error) {
 		HyperWSURL: envOrDefault("HYPERLIQUID_WS_URL", "wss://api.hyperliquid.xyz/ws"),
 
 		InfluencerSetKey: envOrDefault("INFLUENCER_SET_KEY", "ingestion:influencers:primary"),
+
+		HTTPAddr: envOrDefault("HTTP_ADDR", ":8080"),
 	}
 
 	return cfg, nil
